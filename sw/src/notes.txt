@@ -1,0 +1,68 @@
+  // Connect to MQTT Broker if not connected
+  if (WiFi.status() == WL_CONNECTED) {
+    if (mqttc->pubsubc.connected())
+      mqttc->pubsubc.loop();
+    else {
+      Serial.println("Connecting to MQTT broker");
+      if (mqttc->pubsubc.connect("esp8266")) {
+        Serial.println("connected to MQTT broker");
+        mqttc->pubsubc.publish("test/esp","hello world");
+        mqttc->pubsubc.subscribe("inTopic");
+      }
+    }
+  }
+
+
+
+  if (client.connected()) {
+    String payload =  String(voltage, 1);
+    payload.toCharArray(buff, 10);
+    client.publish("vehicle/blazer/voltage", buff);
+
+    payload = String(sensors.getTempCByIndex(0), 1);
+    payload.toCharArray(buff, 10);
+    client.publish("vehicle/blazer/temperature", buff);
+
+  }
+
+  //    lastMsg = now;
+    // ++value;
+    // snprintf (msg, 75, "hello world #%ld", value);
+    // Serial.print("Publish message: ");
+    // Serial.println(msg);
+    client.publish("test", "im alive");
+
+  // Load wifi connection information.
+  if (! loadConfig(&station_ssid, &station_psk))
+  {
+    station_ssid = "";
+    station_psk = "";
+
+    Serial.println("No WiFi connection information available.");
+  }
+
+  // ... Compare file config with sdk config.
+  if (WiFi.SSID() != station_ssid || WiFi.psk() != station_psk)
+  {
+    Serial.println("WiFi config changed.");
+
+    // ... Try to connect to WiFi station.
+    WiFi.begin(station_ssid.c_str(), station_psk.c_str());
+
+    // ... Pritn new SSID
+    Serial.print("new SSID: ");
+    Serial.println(WiFi.SSID());
+
+
+  }
+  else
+  	
+
+  	//  // ... Give ESP 10 seconds to connect to station.
+  unsigned long startTime = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - startTime < 10000)
+  {
+    Serial.write('.');
+    //Serial.print(WiFi.status());
+    delay(500);
+  }
