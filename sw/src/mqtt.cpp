@@ -1,43 +1,106 @@
 #include "mqtt.h"
 
 Mqtt::Mqtt()
+ : PubSubClient()
 {
-  wclient = new WiFiClient();
-  pubsubc = new PubSubClient(*wclient);
+  lastReconnectAttempt = 0;
+  setCallback(Mqtt::onMqttMessage);
+}
+
+Mqtt::Mqtt(Client& client) 
+  : PubSubClient(client)
+{
+  lastReconnectAttempt = 0; 
+  setCallback(Mqtt::onMqttMessage);
+}
+
+QueueList<MqttMessage*> Mqtt::messageQueue;
+
+void Mqtt::onMqttMessage(char* topic, byte* payload, unsigned int length)
+{
+  MqttMessage* msg = new MqttMessage(topic, payload, length);
+  messageQueue.push(msg);
+}
+
+MqttMessage* Mqtt::nextMessage()
+{
+  return messageQueue.pop();
+}
+
+int Mqtt::messagesWaiting()
+{
+  return messageQueue.count();
+}
+
+boolean Mqtt::publish(const char* topic, const uint8_t* payload, unsigned int plength, boolean retained)
+{
+  PubSubClient::publish(topic, payload, plength, retained);
+}
+
+boolean Mqtt::publish(const char* topic, const uint8_t* payload, unsigned int plength)
+{
+  PubSubClient::publish(topic, payload, plength);
+}
+
+boolean Mqtt::publish(const char* topic, const char* payload, boolean retained)
+{
+  PubSubClient::publish(topic, payload, retained);
+}
+
+boolean Mqtt::publish(const char* topic, const char* payload)
+{
+  PubSubClient::publish(topic, payload);
+}
+
+void Mqtt::writeLog(const char* message, DebugLevel level)
+{
+  // todo: optimize me
+  String topic = String("log/" + String("blazer") + "/debug");
+  publish(topic.c_str(), message);
 }
 
 void Mqtt::loop()
 {
-  if (WiFi.status() == WL_CONNECTED)
-    if (!this->pubsubc->connected())
-      this->reconnect();
-}
 
-void Mqtt::connectBroker()
-{
+  if (connected()) {
+    PubSubClient::loop();
+
+    // Process message traffic without callback
+    // 
+
+  }
+  else {
+    // Attempt to reconnect every 2 seconds
+    //
+    long now = millis();
+    if (now - lastReconnectAttempt > 2000) {
+      lastReconnectAttempt = now;
+      if (reconnect()) {
+        lastReconnectAttempt = 0;
+      }
+    }
+  } 
+
 
   
 }
 
-
-void Mqtt::reconnect()
+bool Mqtt::reconnect()
 {
-  // instead of looping until we are connected
-  // we will attempt it once
-  // we must call it multiple times
-  if (!this->pubsubc->connected()) {
-    if (WiFi.status() == WL_CONNECTED) {
-      Serial.print("Attempting MQTT connection...");
-      // Attempt to connect only if we have a wifi connection
-      if (this->pubsubc->connect("ESP8266Client")) {
-        Serial.println("connected");
-        this->pubsubc->publish("outTopic", "hello world");
-        this->pubsubc->subscribe("inTopic");
-      } else {
-        Serial.print("failed, rc=");
-        Serial.print(this->pubsubc->state());
-      }
-    }
+
+  // remove the following hardcoded values
+  // Instead manage an array (queulist?) of subscriptions
+  // and onConnect messages
+  if (connect("truckesp")) {
+    publish("clients/blazer/status","online");
+    subscribe("vccs/blazer/command/#");
   }
+
+  return connected();
+
 }
+
+
+
+
 

@@ -6,9 +6,12 @@
 #include "Arduino.h"
 
 #include <ESP8266WiFi.h>
-#include <ESP8266mDNS.h>
+#include <ESP8266WiFiSTA.h>
 #include <WiFiUdp.h>
+
 #include <FS.h>
+
+#include <ESP8266mDNS.h>
 #include <ArduinoOTA.h>
 
 #define HOSTNAME "ESP8266-OTA-" ///< Hostename. The setup function adds the Chip ID at the end.
@@ -16,14 +19,16 @@
 /// Uncomment the next line for verbose output over UART.
 //#define SERIAL_VERBOSE
 
-// we are:
-// STA_SEARCHING
-// STA_CONNECTING
-// STA_CONNECTED
-// AP
-
 // Wifi State Machine
-enum State { STA_READY, STA_SEARCHING, STA_CONNECTING, STA_CONNECTED, AP };
+enum State { 
+  STA_READY, 
+  STA_SEARCHING, 
+  STA_CONNECTING, 
+  STA_CONNECTED, 
+  STA_DISCONNECTED, 
+  AP 
+};
+
 struct WifiState {
   State state;
   unsigned long stageTime;
@@ -35,11 +40,16 @@ struct Network {
   String psk;
 };
 
-class Wifi
+class Wifi: public WiFiClient
 {
 
   public:
     Wifi(Config* config_p);
+
+    static WiFiEvent_t newEvent;
+    static bool newEventHolding;
+
+    static void onWifiEvent(WiFiEvent_t event);
 
     void goAccessPoint();
     void searchNetworks();
@@ -50,6 +60,7 @@ class Wifi
     bool saveConfig(String *ssid, String *pass);
     void printEncryptionType(int thisType);
     void listNetworks();
+    void printStatus();
 
     Network networks[10];
     Network defaultAp;
@@ -62,7 +73,7 @@ class Wifi
     String hostname;
     WifiState state;
 
-    Mqtt *mqttc;
+    Mqtt *mqtt;
     static void mqttCallback(char* topic, byte* payload, unsigned int length);
 
   private:

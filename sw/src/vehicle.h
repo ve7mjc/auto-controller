@@ -7,29 +7,40 @@
 #include <Ticker.h>
 
 // Maxim OneWire Interface
-#include <OneWire.h>
-#include <DallasTemperature.h>
-#define MAX_DS1820_SENSORS 1
+//#include <OneWire.h>
+//#include <DallasTemperature.h>
+//#define MAX_DS1820_SENSORS 1
 
 // ESP8266 ADC
-#define VOLTAGE_BATTERY_ADC 0
+const uint8_t VOLTAGE_BATTERY_ADC = 0;
 
 // MCP23017 I2C IO Expander
 #include <Adafruit_MCP23017.h>
+const uint8_t NUM_IO = 16;
 
-#define NUM_IO 16
-
-#define MCP_OUT_PWR_AUX 9
-#define MCP_OUT_REQ_AUX_SHUTDOWN 10
-// #define MCP_OUT_LOCK_DOORS 0
-// #define MCP_OUT_ARM_ALARM 0
-
+// Inputs
 const uint8_t MCP_IN_ACC = 0;
+const uint8_t MCP_IN_RESP_SBC_SHUTDOWN = 11;
 
-#define MCP_IN_RESP_SBC_SHUTDOWN 11
-// #define MCP_IN_DOME_LIGHTS 0
+const uint8_t MCP_IN_OEM_ALARM_DISARMING = 12; // is 12 pooched????
+const uint8_t MCP_IN_DOORS_LOCKING = 13;
+const uint8_t MCP_IN_DOORS_UNLOCKING = 14;
+const uint8_t MCP_IN_DOOR_PIN = 15;
 
-enum IoDirection { DIR_INPUT, DIR_OUTPUT };
+// Outputs
+const uint8_t MCP_OUT_PWR_AUX = 9;
+const uint8_t MCP_OUT_REQ_AUX_SHUTDOWN = 10;
+
+enum IoDirection { 
+  DIR_INPUT, 
+  DIR_OUTPUT 
+};
+
+enum AuxPowerMode {
+  AUX_OFF,
+  AUX_ON,
+  AUX_AUTO
+};
 
 struct Io {
   IoDirection direction;
@@ -38,6 +49,8 @@ struct Io {
   bool enabled;
   bool inverted;
   bool pullup;
+  // debouncing
+  unsigned short bounce_count;
 };
 
 class Vehicle 
@@ -49,12 +62,14 @@ class Vehicle
     void loop();
 
     void setAuxPower(bool value = true, bool soft = true);
+
+    bool lowPowerMode;
+
+    Wifi* wifi;
     
 	private:
 
     Config* config;
-
-    Wifi* wifi;
 
     double getVoltageSupply(void);
     void checkSensors();
@@ -63,16 +78,20 @@ class Vehicle
 
     // Vehicle Status
 		double voltageSupply;
+
+    // AUX Supply
+    AuxPowerMode auxPowerMode;
 		bool statusInputAccessory;
     bool statusOutputPowerAux;
+    bool statusOutputPowerAuxConditions;
 		
 		double voltageDividerConstant;
 		double voltageDividerCalibrateOffset;
-    byte addr[MAX_DS1820_SENSORS][8];
+    // byte addr[MAX_DS1820_SENSORS][8];
 
     Adafruit_MCP23017* mcp;
-    DallasTemperature* sensors;
-    OneWire* oneWire;
+    // DallasTemperature* sensors;
+    // OneWire* oneWire;
 
     // Timer and State Management
     Ticker reportTimer;

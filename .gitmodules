@@ -1,0 +1,3 @@
+[submodule "sw/src/pubsubclient"]
+	path = sw/src/pubsubclient
+	url = https://github.com/knolleary/pubsubclient.git

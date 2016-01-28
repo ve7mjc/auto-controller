@@ -1,6 +1,12 @@
 #include "wifi.h"
+// #include "callback.h"
+
+// Must define static members
+bool Wifi::newEventHolding = false;
+WiFiEvent_t Wifi::newEvent = WIFI_EVENT_MAX;
 
 Wifi::Wifi(Config* config_p)
+ : WiFiClient()
 {
   // Pass configuration
   config = config_p;
@@ -11,105 +17,179 @@ Wifi::Wifi(Config* config_p)
   defaultAp.ssid = config->defaultApSSid;
   defaultAp.psk = config->defaultApPsk;
 
-  this->networks[0].ssid = config->networkSsid;
-  this->networks[0].psk = config->networkPsk;
+  networks[0].ssid = config->networkSsid;
+  networks[0].psk = config->networkPsk;
 
-  this->hostname = String("TruckESP");
-  WiFi.hostname(this->hostname);
+  // Build hostname as {vehicleNameShort}ESP
+  hostname = String(config->vehicleNameShort);
+  hostname += String("ESP");
+  WiFi.hostname(hostname);
+  
+  // Setting the ESP8266 station to connect to the AP (which is recorded)
+  // automatically or not when powered on.
+//  WiFi.setAutoConnect(false);
+//  WiFi.setAutoReconnect(true);
 
-  ArduinoOTA.setHostname((const char *)this->hostname.c_str());
+  // Print MAC Address
+//  Serial.print("MAC Address: ");
+//  Serial.println(WiFi.macAddress());
+
+  ArduinoOTA.setHostname((const char *)hostname.c_str());
 
   // Configure MQTT but do not connect
-  this->mqttc = new Mqtt();
-  this->mqttc->pubsubc->setServer(config->mqttBrokerHost, config->mqttBrokerPort);
-  this->mqttc->pubsubc->setCallback(mqttCallback);
+  // For whatever reason, we MUST create a (Client)WiFiClient
+  // and pass it into the PubSubClient constructor.  Fix on a
+  // rainy day
+  // WiFiClient* wclient = new WiFiClient();
+  mqtt = new Mqtt(*(Client*)this);
+  mqtt->setServer(config->mqttBrokerHost, config->mqttBrokerPort);
 
 }
 
+//------------------------------------------------------------------------
+// Callback function.
+//typedef CBFunctor1wRet<int, int> cbEvent;
+
 void Wifi::init()
 {
+  WiFi.onEvent(Wifi::onWifiEvent);
   switchState(STA_READY);
   loop();
 }
 
+// WiFiEventCb cbEvent
+void Wifi::onWifiEvent(WiFiEvent_t event) {
+  Wifi::newEvent = event;
+  Wifi::newEventHolding = true;
+}
+
 void Wifi::loop()
 {
-  switch (this->state.state) {
+
+  // process events
+  if (newEventHolding) {
+    newEventHolding = false;
+    switch(newEvent) {
+      case WIFI_EVENT_STAMODE_CONNECTED:
+      Serial.println("WiFiEvent: WIFI_EVENT_STAMODE_CONNECTED");
+      break;
+      
+      case WIFI_EVENT_STAMODE_DISCONNECTED:
+      Serial.println("WiFiEvent: WIFI_EVENT_STAMODE_DISCONNECTED");
+      switchState(STA_DISCONNECTED);
+      break;
+      
+      case WIFI_EVENT_STAMODE_AUTHMODE_CHANGE:
+      Serial.println("WiFiEvent: WIFI_EVENT_STAMODE_AUTHMODE_CHANGE");
+      break;
+      
+      case WIFI_EVENT_STAMODE_GOT_IP:
+      
+      Serial.println("WiFiEvent: WIFI_EVENT_STAMODE_GOT_IP");
+      Serial.print("IP address: ");
+      Serial.println(WiFi.localIP());
+
+      if (mqtt->connect("truckesp")) {
+        // Note, following content is also hardcoded into Mqtt class
+        // reconnect method; This must be improved
+        mqtt->publish("clients/blazer/status","online");
+        mqtt->subscribe("vccs/blazer/command/#");
+      }
+      
+      // Begin cannot be called more than once
+      // as a bool _initialized is checked
+      // during entry to the method
+      ArduinoOTA.begin();
+      
+      switchState(STA_CONNECTED);
+      
+      break;
+      
+      case WIFI_EVENT_STAMODE_DHCP_TIMEOUT:
+      Serial.println("WiFiEvent: WIFI_EVENT_STAMODE_DHCP_TIMEOUT");
+      break;
+      
+      case WIFI_EVENT_SOFTAPMODE_STACONNECTED:
+      Serial.println("WiFiEvent: WIFI_EVENT_SOFTAPMODE_STACONNECTED");
+      break;
+      
+      case WIFI_EVENT_SOFTAPMODE_STADISCONNECTED:
+      Serial.println("WiFiEvent: WIFI_EVENT_SOFTAPMODE_STADISCONNECTED");
+      break;
+      
+      case WIFI_EVENT_SOFTAPMODE_PROBEREQRECVED:
+      Serial.println("WiFiEvent: WIFI_EVENT_SOFTAPMODE_PROBEREQRECVED");
+      break;
+      
+      case WIFI_EVENT_MAX:
+      Serial.println("WiFiEvent: WIFI_EVENT_MAX");
+      break;
+      
+      default:
+      break;
+    }
+  }
+
+  
+  switch (state.state) {
     
     case STA_READY:
 
+      WiFi.disconnect(true); // clear config ! big deal!
+
       if (WiFi.getMode() != WIFI_STA) {
         WiFi.mode(WIFI_STA);
-        delay(10); // todo, this is blocking for 10 ms !!
+        delay(100); // todo, this is blocking for 100 ms !!
       }
-      
-      WiFi.begin(this->networks[0].ssid.c_str(), this->networks[0].psk.c_str());
+
+      Serial.print("Connecting to SSID ");
+      Serial.print(networks[0].ssid);
+      Serial.print(" psk: ");
+      Serial.println(networks[0].psk);
+
+      WiFi.begin(networks[0].ssid.c_str(), networks[0].psk.c_str());      
 
       switchState(STA_CONNECTING);
       
       break;
       
     case STA_CONNECTING:
-
-      // If we are connected and have been for in excess of 10 seconds
-      // There must be a better way to do this such as determining what
-      // it is we want -- an IP address?  If so, check for an IP address
-      // in the same loop and thus we can connect much faster
-      if ((WiFi.status() == WL_CONNECTED) && (state.stageTime > 2000) && WiFi.localIP()) {
-
-        // TODO: Much more checking for a PROPER connect
-        // Do we have a valid dhcp lease?
-        Serial.print("IP address: ");
-        Serial.println(WiFi.localIP());
-
-        // Initialize Over-the-air (OTA) firmware loading services
-        ArduinoOTA.begin();
-        mqttc->pubsubc->connect("truckesp");
-        
-        switchState(STA_CONNECTED);
-        
-      } else {
-        if (WiFi.status() == WL_CONNECTED) {
-          // Serial.println(WiFi.localIP());
-        }
-      }
-
-      // State: We have been unable to connect and it has been 5 seconds
-      if ((WiFi.status() != WL_CONNECTED) && ((millis() - state.stageTime) > 5000)) {
-
-        // We are going to switch to Access Point Mode
-        switchState(AP);
-
-        // ... Uncomment this for debugging output.
-        //WiFi.printDiag(Serial);
-        
-        // we are expired on the connect
-        Serial.println("timeout connecting");
-        Serial.println("Going into AP mode");
-
-        WiFi.mode(WIFI_AP);
-        delay(10);
-        WiFi.softAP(this->defaultAp.ssid.c_str(), this->defaultAp.psk.c_str());
     
-        Serial.print("IP address: ");
-        Serial.println(WiFi.softAPIP());
-
-      }
-      
       break;
-      
+        
+//      // State: We have been unable to connect and it has been 5 seconds
+//      if ((WiFi.status() != WL_CONNECTED) && (state.stageTime > 10000)) {
+//
+//        printStatus();
+//
+//        // We are going to switch to Access Point Mode
+//        switchState(AP);
+//
+//        // ... Uncomment this for debugging output.
+//        WiFi.printDiag(Serial);
+//        
+//        // we are expired on the connect
+//        Serial.println("STA is not connected; Timing out..");
+//        Serial.println("Going into AP mode");
+//
+//        WiFi.mode(WIFI_AP);
+//        delay(10);
+//        WiFi.softAP(this->defaultAp.ssid.c_str(), this->defaultAp.psk.c_str());
+//    
+//        Serial.print("IP address: ");
+//        Serial.println(WiFi.softAPIP());
+//
+//      }
+
     case STA_CONNECTED:
     
-      // check for disconnect
-      if(WiFi.status() != WL_CONNECTED) {
+      ArduinoOTA.handle();
+    
+      break;
 
-        // Return back to STA_READY as if we just restarted
-        switchState(STA_READY);
-        
-      } else {
-        ArduinoOTA.handle();
-      }
-      
+    case STA_DISCONNECTED:
+
+      switchState(STA_READY);
       break;
 
     case AP:
@@ -121,24 +201,25 @@ void Wifi::loop()
       if ((millis() - lastWifiApScanTime) > 5000) {
 
         int n = WiFi.scanNetworks();
-        bool found = false;
+
         for (int i = 0; i < n; ++i) {
           if (WiFi.SSID(i) == config->networkSsid) {
-            found = true;
-            
-            // Return back to STA_READY as if we just restarted
+            Serial.println("Located preferred AP; Switching to STA from AP mode.");
+            Serial.print("RSSI: ");
+            Serial.print(WiFi.RSSI(i));
+            Serial.println(" dBm");
             switchState(STA_READY);
+          } else {
+            // Troubleshooting
+            // Print SSID and RSSI for each network found
+//            Serial.print(i + 1);
+//            Serial.print(": ");
+//            Serial.print(WiFi.SSID(i));
+//            Serial.print(" (");
+//            Serial.print(WiFi.RSSI(i));
+//            Serial.print(")");
+//            Serial.println((WiFi.encryptionType(i) == ENC_TYPE_NONE)?" ":"*");
           }
-
-          // Troubleshooting
-          // Print SSID and RSSI for each network found
-          Serial.print(i + 1);
-          Serial.print(": ");
-          Serial.print(WiFi.SSID(i));
-          Serial.print(" (");
-          Serial.print(WiFi.RSSI(i));
-          Serial.print(")");
-          Serial.println((WiFi.encryptionType(i) == ENC_TYPE_NONE)?" ":"*");
           
         }
       
@@ -150,28 +231,44 @@ void Wifi::loop()
   }
 
   // track elapsed time in particular state
-  this->state.stageTime = millis() - this->state.stageStartTime;
+  state.stageTime = millis() - state.stageStartTime;
 
-  // MQTT
-  if (state.state == STA_CONNECTED) {
-    mqttc->loop();
-  }
-
+  // tend to PubSubClient networking chores
+  mqtt->loop();
+  
 
 }
 
-void Wifi::switchState(State state)
+void Wifi::printStatus()
 {
-
-  switch (state) {
-    case STA_READY:
-    Serial.println("\r\nReady to connect to STA");
+  Serial.print("WiFi.status == ");
+  switch(WiFi.status()) {
+    case WL_CONNECTED:
+    Serial.println("STATION_GOT_IP");
     break;
+    case WL_NO_SSID_AVAIL:
+    Serial.println("STATION_NO_AP_FOUND");
+    break;
+    case WL_CONNECT_FAILED:
+    Serial.println("STATION_CONNECT_FAIL or STATION_WRONG_PASSWORD");
+    break;
+    case WL_IDLE_STATUS:
+    Serial.println("STATION_IDLE");
+    break;
+    case WL_DISCONNECTED:
+    Serial.println("WL_DISCONNECTED");
+    break;
+    default:
+    Serial.println("UNKNOWN");
   }
   
-  this->state.state = state;
-  this->state.stageTime = 0;
-  this->state.stageStartTime = millis();
+}
+
+void Wifi::switchState(State state_new)
+{
+  state.state = state_new;
+  state.stageTime = 0;
+  state.stageStartTime = millis();
 }
 
 State Wifi::checkState() 
